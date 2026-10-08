@@ -1,0 +1,125 @@
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'net.minecraftforge.gradle' version '[6.0.16,6.2)'
+}
+
+group = mod_group_id
+version = mod_version
+
+base {
+    archivesName = mod_id
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+}
+
+minecraft {
+    mappings channel: mapping_channel, version: mapping_version
+    copyIdeResources = true
+
+    runs {
+        configureEach {
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+        client {
+            workingDirectory = project.file('run/client')
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        // CurseMaven: any CurseForge file by project and file id (curse.maven:<name>-<projectId>:<fileId>).
+        name = 'CurseMaven'
+        url = 'https://cursemaven.com'
+        content { includeGroup 'curse.maven' }
+    }
+}
+
+// Compile-only mods come from CurseForge through CurseMaven; the file ids are in gradle.properties.
+// To build against a jar that is not on CurseForge (e.g. a newer pack build), pass its path instead:
+//   -Pvault_jar=path/to/the_vault-....jar   (likewise -Pae2_jar, -Prs_jar, -Pjei_jar)
+def compileMod = { String property, String coordinate ->
+    def local = findProperty(property)
+    if (local) {
+        def f = file(local)
+        if (!f.isFile()) throw new GradleException("-P${property}=${local} does not exist")
+        return files(f)
+    }
+    return fg.deobf(coordinate)
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+
+    compileOnly compileMod('vault_jar', "curse.maven:vault-hunters-458203:${vault_hunters_file}")
+    compileOnly compileMod('ae2_jar', "curse.maven:ae2-223794:${ae2_file}")
+    compileOnly compileMod('rs_jar', "curse.maven:refined-storage-243076:${refined_storage_file}")
+    compileOnly compileMod('jei_jar', "curse.maven:jei-238222:${jei_file}")
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+}
+
+// Vault Hunters ships two lines on CurseForge (Remastered and the regular 3rd Edition). The mod is built against
+// Remastered and must also compile against the newest regular 3rd Edition file, so `check` compiles it twice.
+configurations {
+    vaultHunters3
+}
+dependencies {
+    vaultHunters3 fg.deobf("curse.maven:vault-hunters-third-edition-458203:${vault_hunters_3_file}")
+}
+def compileAgainstVaultHunters3 = tasks.register('compileAgainstVaultHunters3', JavaCompile) {
+    description = 'Compiles the main sources against the regular Vault Hunters 3rd Edition jar.'
+    group = 'verification'
+    source = sourceSets.main.java
+    classpath = sourceSets.main.compileClasspath.filter { !it.name.startsWith('vault-hunters-458203') } + configurations.vaultHunters3
+    destinationDirectory = layout.buildDirectory.dir('vh3-check/classes')
+    options.encoding = 'UTF-8'
+    javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(17) }
+}
+tasks.named('check') { dependsOn compileAgainstVaultHunters3 }
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    var replaceProperties = [
+            minecraft_version: minecraft_version, minecraft_version_range: minecraft_version_range,
+            forge_version: forge_version, forge_version_range: forge_version_range,
+            loader_version_range: loader_version_range,
+            mod_id: mod_id, mod_name: mod_name, mod_license: mod_license, mod_version: mod_version,
+            mod_authors: mod_authors, mod_description: mod_description,
+    ]
+    inputs.properties replaceProperties
+    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties + [project: project]
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    manifest {
+        attributes([
+                'Specification-Title'     : mod_id,
+                'Specification-Vendor'    : mod_authors,
+                'Specification-Version'   : '1',
+                'Implementation-Title'    : project.name,
+                'Implementation-Version'  : project.jar.archiveVersion,
+                'Implementation-Vendor'   : mod_authors,
+        ])
+    }
+    finalizedBy 'reobfJar'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
